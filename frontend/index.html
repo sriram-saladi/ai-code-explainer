@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Code Explainer</title>
+</head>
+<body>
+  <h1>Code Explainer (Gemini + FastAPI)</h1>
+  
+  <textarea id="code" rows="5" cols="50" placeholder="Paste your code here"></textarea><br><br>
+  <input id="action" placeholder="e.g. explain or optimize"><br><br>
+  <button onclick="sendCode()">Send</button>
+  
+  <h2>Response:</h2>
+  <pre id="result"></pre>
+
+  <script>
+    async function sendCode() {
+      const code = document.getElementById("code").value;
+      const action = document.getElementById("action").value;
+
+      const res = await fetch("http://127.0.0.1:8000/process-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, action })
+      });
+
+      const data = await res.json();
+      document.getElementById("result").textContent = data.result;
+    }
+  </script>
+</body>
+</html>

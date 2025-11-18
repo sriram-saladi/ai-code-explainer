@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Test Gemini Code Processor</title>
+</head>
+<body>
+  <h2>Test Gemini Code Processor</h2>
+
+  <textarea id="code" rows="5" cols="60"></textarea><br />
+  <input id="action" value="explain" /><br /><br />
+  <button onclick="sendToBackend()">Send to Backend</button>
+
+  <h3>Response:</h3>
+  <pre id="response"></pre>
+
+  <!-- 👇 This is the script section -->
+  <script>
+    async function sendToBackend() {
+      const code = document.getElementById("code").value;
+      const action = document.getElementById("action").value;
+
+      const responseElement = document.getElementById("response");
+      responseElement.textContent = "Processing...";
+
+      try {
+        const res = await fetch("http://127.0.0.1:8000/process-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, action }),
+        });
+
+        if (!res.ok) throw new Error(`HTTP error! Status: ${res.status}`);
+        const data = await res.json();
+        responseElement.textContent = data.result || "No response text.";
+      } catch (error) {
+        responseElement.textContent = `❌ Failed to connect to backend: ${error}`;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,37 +1,33 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
 
-# Load .env file
+# Load environment variables
 load_dotenv()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Allow frontend connection
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class CodeRequest(BaseModel):
     code: str
-    action: str  # "explain" or "improve"
+    action: str
 
-@app.post("/analyze_code")
-async def analyze_code(request: CodeRequest):
-    try:
-        if not request.code.strip():
-            raise HTTPException(status_code=400, detail="Code cannot be empty.")
-
-        model = genai.GenerativeModel("gemini-2.5-flash")
-
-        prompt = (
-            f"Please {request.action} this code:\n\n{request.code}\n\n"
-            "If explaining, be concise but clear. "
-            "If improving, provide improved code and reasoning."
-        )
-
-        response = model.generate_content(prompt)
-        return {"result": response.text}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/process-code")
+def process_code(req: CodeRequest):
+    model = genai.GenerativeModel("models/gemini-2.5-flash")
+    prompt = f"The user wants to {req.action} this code:\n{req.code}"
+    
+    response = model.generate_content(prompt)
+    return {"result": response.text}
