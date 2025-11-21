@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Explainer — Code Explainer</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { font-family: Inter, Arial; background:#0f0f10; color:#fff; padding:20px; display:flex; gap:30px; }
+    .left { width:55%; }
+    .right { width:40%; }
+    textarea { width:100%; min-height:160px; padding:12px; border-radius:8px; background:#1a1a1b; color:#ddd; border:1px solid #252526; }
+    input[type="text"] { padding:8px; width:60%; border-radius:6px; border:1px solid #333; }
+    .btn { background:#1976d2; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; margin-left:8px; }
+    pre { background:#111; padding:12px; border-radius:6px; color:#ddd; white-space:pre-wrap; }
+    #comments { border:1px solid #222; padding:12px; min-height:160px; background:#0b0b0b; overflow:auto; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div class="left">
+    <h2>Code Explainer (Gemini + FastAPI)</h2>
+
+    <textarea id="code" placeholder="Paste your code here"></textarea><br><br>
+    <input id="action" type="text" placeholder="e.g. explain or optimize" />
+    <button class="btn" onclick="sendCode()">Send</button>
+
+    <h3 id="room_label" style="margin-top:12px"></h3>
+
+    <h3>Response:</h3>
+    <div id="result"></div>
+
+    <h3>Version History:</h3>
+    <button class="btn" onclick="loadHistory()">Load History</button>
+    <pre id="history"></pre>
+  </div>
+
+  <div class="right">
+    <h3>Comments</h3>
+    <div id="comments"></div>
+
+    <input id="comment_input" placeholder="Write a comment..." style="width:100%; padding:8px; margin-top:8px; border-radius:6px; border:1px solid #333; background:#111; color:#fff;">
+    <div style="margin-top:8px;">
+      <button class="btn" onclick="sendComment()">Send</button>
+    </div>
+
+    <div id="status" style="margin-top:12px;color:#9aa0a6"></div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <script>
+    const BASE = "http://127.0.0.1:8000";
+    const socket = io(BASE, { transports: ["websocket"] });
+
+    // read room from URL (?room=ABC123)
+    function getRoomFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("room");
+    }
+
+    const room = getRoomFromURL();
+    if (!room) {
+      // safe fallback: go back to join page
+      alert("No room provided. Redirecting to Join page.");
+      window.location.href = "join.html";
+    }
+
+    document.getElementById("room_label").innerText = "Current Room: " + room;
+    document.getElementById("status").innerText = "Connecting...";
+
+    // Emit join only after socket connects
+    socket.on("connect", () => {
+      console.log("socket connected:", socket.id);
+      socket.emit("join", { room });            // <-- join event (matches backend)
+    });
+
+    // if server sends join_error, handle it
+    socket.on("join_error", (d) => {
+      document.getElementById("status").innerText = d.msg || "Join failed";
+      alert("Join failed: " + (d.msg || "unknown"));
+      window.location.href = "join.html";
+    });
+
+    // receive room history once joined
+    socket.on("room_history", (docs) => {
+      document.getElementById("status").innerText = "Joined room: " + room;
+      const box = document.getElementById("comments");
+      box.innerHTML = "";
+      docs.forEach(appendComment);
+    });
+
+    // live comments
+    socket.on("new_comment", (doc) => {
+      appendComment(doc);
+    });
+
+    function appendComment(c) {
+      const box = document.getElementById("comments");
+      const el = document.createElement("div");
+      el.style.padding = "6px 0";
+      el.innerHTML = `<b style="color:#9ad;">${escapeHtml(c.author)}:</b> ${escapeHtml(c.text)}`;
+      box.appendChild(el);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      if (!s) return "";
+      return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
+
+    async function sendComment() {
+      const text = document.getElementById("comment_input").value.trim();
+      if (!text) return;
+      socket.emit("comment", {
+        room,
+        author: "User",
+        text
+      });
+      document.getElementById("comment_input").value = "";
+    }
+
+    // Explainer → call process-code
+    async function sendCode() {
+      const code = document.getElementById("code").value;
+      const action = document.getElementById("action").value || "explain";
+
+      const res = await fetch(`${BASE}/process-code`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ code, action })
+      });
+
+      const data = await res.json();
+      if (data.error) {
+        document.getElementById("result").innerText = "LLM error: " + (data.error || JSON.stringify(data));
+        return;
+      }
+
+      // structured render
+      const r = data.result;
+      document.getElementById("result").innerHTML = `
+        <h4>Code</h4><pre>${escapeHtml(r.code || "")}</pre>
+        <h4>What it Does</h4><p>${escapeHtml(r.what_it_does || "")}</p>
+        <h4>Visual Flow</h4><pre>${escapeHtml(r.visual_flow || "")}</pre>
+        <h4>Steps</h4><pre>${escapeHtml(r.steps || "")}</pre>
+        <h4>Key Idea</h4><p>${escapeHtml(r.key_idea || "")}</p>
+        <h4>Output</h4><pre>${escapeHtml(r.output || "")}</pre>
+      `;
+    }
+
+    // history fetch (global history list)
+    async function loadHistory() {
+      const res = await fetch(`${BASE}/history`);
+      const data = await res.json();
+      let out = "";
+      data.history.forEach((h,i) => {
+        out += `Version ${i+1} — ${h.timestamp}\n${h.code}\n\n----------------\n\n`;
+      });
+      document.getElementById("history").innerText = out;
+    }
+  </script>
+</body>
+</html>

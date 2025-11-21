@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Join or Create Room — Code Explainer</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { font-family: Inter, Arial; padding: 30px; background:#0f0f10; color:#fff; }
+    .btn { background:#1976d2; color:#fff; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; }
+    input { padding:8px; width:220px; margin-left:8px; border-radius:6px; border:1px solid #333; }
+    .row { margin: 12px 0; }
+    .note { color:#9aa0a6; margin-top:8px; }
+    img { max-width:100%; height:auto; margin-top:18px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>Room Access</h1>
+
+  <div class="row">
+    <button class="btn" onclick="createRoom()">Create New Room</button>
+    <span style="margin-left:10px">or</span>
+  </div>
+
+  <div class="row">
+    <input id="join_code" placeholder="Enter room code" />
+    <button class="btn" onclick="joinRoom()">Join Room</button>
+  </div>
+
+  <div id="join_status" class="note"></div>
+
+  <hr style="border-color:#222; margin:18px 0;">
+
+  <p class="note">Preview of current app (screenshot):</p>
+  <!-- local preview image (your uploaded file) -->
+  <img src="/mnt/data/ee510682-7fc3-4371-99f3-b7846745453f.png" alt="app preview (local)">
+
+  <script>
+    const BASE = "http://127.0.0.1:8000";
+
+    async function createRoom() {
+      const res = await fetch(`${BASE}/create-room`, { method: "POST" });
+      if (!res.ok) {
+        document.getElementById("join_status").innerText = "Failed to create room — check backend.";
+        return;
+      }
+      const data = await res.json();
+      document.getElementById("join_code").value = data.room;
+      document.getElementById("join_status").style.color = "lightgreen";
+      document.getElementById("join_status").innerText = `Room created: ${data.room} — click Join Room or copy code.`;
+    }
+
+    async function joinRoom() {
+      const room = document.getElementById("join_code").value.trim();
+      if (!room) {
+        document.getElementById("join_status").innerText = "Enter a room code.";
+        return;
+      }
+
+      const res = await fetch(`${BASE}/validate-room/${room}`);
+      if (!res.ok) {
+        document.getElementById("join_status").innerText = "Server error validating room.";
+        return;
+      }
+      const data = await res.json();
+      if (!data.valid) {
+        document.getElementById("join_status").innerText = "Invalid room code.";
+        return;
+      }
+
+      // Redirect to lobby page (user chooses Explainer or Collaboration)
+      window.location.href = `lobby.html?room=${encodeURIComponent(room)}`;
+    }
+  </script>
+</body>
+</html>

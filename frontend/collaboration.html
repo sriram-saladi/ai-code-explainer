@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live Collaboration — Google Docs Mode</title>
+  <style>
+    body { font-family: Inter, Arial; padding: 20px; background:#0e0e0f; color:#fff; display:flex; gap:20px; }
+    textarea { width:100%; height:400px; background:#111; color:#eee;
+               border:1px solid #333; border-radius:6px; padding:12px; resize:none; }
+    .right { width:300px; }
+    #comments { height:300px; overflow:auto; background:#111; border:1px solid #333; padding:8px; }
+    input { width:100%; margin-top:8px; padding:8px; background:#111; color:#eee; border-radius:6px; border:1px solid #333; }
+    .btn { margin-top:8px; background:#1976d2; color:white; padding:8px; border:none; border-radius:6px; cursor:pointer; }
+  </style>
+</head>
+<body>
+
+  <div style="flex:1">
+    <h2>Google Docs Collaboration</h2>
+    <h3 id="room_label">Room: —</h3>
+
+    <textarea id="editor" placeholder="// waiting for doc..."></textarea>
+    <div style="margin-top:6px; color:#aaa">Status: <span id="sync_status">disconnected</span></div>
+  </div>
+
+  <div class="right">
+    <h3>Comments</h3>
+    <div id="comments"></div>
+    <input id="comment_input" placeholder="Write comment...">
+    <button class="btn" onclick="sendComment()">Send</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <script>
+    const socket = io("http://127.0.0.1:8000", { transports: ["websocket"] });
+
+    const room = new URLSearchParams(location.search).get("room");
+    if (!room) {
+      alert("Room missing in URL.");
+      throw new Error("Missing room");
+    }
+    document.getElementById("room_label").innerText = "Room: " + room;
+
+    let applyingPatch = false;
+    let lastText = "";
+
+    // ----------------------------------------
+    // Comment handlers
+    // ----------------------------------------
+    socket.on("room_history", docs => {
+      console.log("room_history:", docs);
+      const c = document.getElementById("comments");
+      c.innerHTML = "";
+      docs.forEach(d => appendComment(d));
+    });
+
+    socket.on("new_comment", appendComment);
+
+    function appendComment(c) {
+      const box = document.getElementById("comments");
+      box.innerHTML += `<div><b>${escapeHtml(c.author)}</b>: ${escapeHtml(c.text)}</div>`;
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      return String(s || "")
+        .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function sendComment() {
+      const input = document.getElementById("comment_input");
+      if (!input.value.trim()) return;
+      socket.emit("comment", { room, author: "User", text: input.value });
+      input.value = "";
+    }
+
+    // ----------------------------------------
+    // Full document sync on join
+    // ----------------------------------------
+    socket.on("editor_full", payload => {
+      console.log("⤵️ editor_full:", payload);
+      applyingPatch = true;
+      const ed = document.getElementById("editor");
+      ed.value = payload.content || "";
+      lastText = ed.value;
+      applyingPatch = false;
+    });
+
+    // ----------------------------------------
+    // Live patch APPLY
+    // ----------------------------------------
+    socket.on("editor_update", patch => {
+      console.log("📥 editor_update:", patch);
+      applyingPatch = true;
+
+      const ed = document.getElementById("editor");
+      const value = ed.value;
+
+      const s = Math.max(0, Math.min(patch.start, value.length));
+      const e = Math.max(0, Math.min(s + patch.removedLength, value.length));
+
+      ed.value = value.slice(0, s) + patch.text + value.slice(e);
+
+      lastText = ed.value;
+      applyingPatch = false;
+    });
+
+    // ----------------------------------------
+    // Join room when connected
+    // ----------------------------------------
+    socket.on("connect", () => {
+      console.log("SOCKET CONNECTED:", socket.id, "-> joining", room);
+      document.getElementById("sync_status").innerText = "connected";
+      socket.emit("join", { room });
+    });
+
+    socket.on("disconnect", () => {
+      console.log("SOCKET DISCONNECTED");
+      document.getElementById("sync_status").innerText = "disconnected";
+    });
+
+    // ----------------------------------------
+    // Diff + send patch
+    // ----------------------------------------
+    const editor = document.getElementById("editor");
+    editor.addEventListener("input", () => {
+      if (applyingPatch) return;
+
+      const newText = editor.value;
+      const oldText = lastText;
+
+      // diff start
+      let start = 0;
+      while (start < oldText.length &&
+             start < newText.length &&
+             oldText[start] === newText[start]) start++;
+
+      // diff end
+      let endOld = oldText.length - 1;
+      let endNew = newText.length - 1;
+      while (endOld >= start &&
+             endNew >= start &&
+             oldText[endOld] === newText[endNew]) {
+        endOld--; endNew--;
+      }
+
+      const removed = oldText.slice(start, endOld + 1);
+      const added   = newText.slice(start, endNew + 1);
+
+      const patch = { room, start, removedLength: removed.length, text: added };
+      console.log("✉️ SENDING PATCH:", patch);
+      socket.emit("editor_broadcast", patch);
+
+      lastText = newText;
+    });
+
+    // leave cleanly
+    window.addEventListener("beforeunload", () => {
+      try { socket.emit("leave", { room }); } catch(e){}
+    });
+  </script>
+</body>
+</html>
