@@ -39,7 +39,10 @@ rooms_collection = db["rooms"]     # Stores room code + canonical doc content
 # ==================================================
 # FastAPI + Socket.IO Setup
 # ==================================================
-sio = socketio.AsyncServer(cors_allowed_origins="*", async_mode="asgi")
+sio = socketio.AsyncServer(
+    cors_allowed_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
+    async_mode="asgi"
+)
 fastapi_app = FastAPI()
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -154,35 +157,11 @@ async def connect(sid, environ):
 async def disconnect(sid):
     print(f"❌ Client disconnected {sid}")
 
-@sio.event
-async def join(sid, data):
-    print("JOIN EVENT:", data)
-    if not isinstance(data, dict) or "room" not in data:
-        await sio.emit("join_error", {"msg": "invalid join payload"}, room=sid)
-        return
-
-    room = data["room"]
-    doc = rooms_collection.find_one({"room": room})
-
-    if not doc:
-        await sio.emit("join_error", {"msg": "room does not exist"}, room=sid)
-        return
-
-    sio.enter_room(sid, room)
-    print(f"User {sid} joined room {room}")
-
-    # send comments
-    comments = list(comments_collection.find({"room": room}, {"_id": 0}).sort("timestamp", 1))
-    await sio.emit("room_history", comments, room=sid)
-
-    # send canonical full document
-    canonical_text = doc.get("content", "")
-    await sio.emit("editor_full", {"content": canonical_text}, room=sid)
 
 @sio.event
 async def leave(sid, data):
     if isinstance(data, dict) and "room" in data:
-        sio.leave_room(sid, data["room"])
+        await sio.leave_room(sid, data["room"])  # ✅ Added await!
         print(f"{sid} left room {data['room']}")
 
 @sio.event
@@ -221,13 +200,81 @@ def apply_patch(content: str, start: int, removed: int, new_text: str) -> str:
 # GOOGLE DOCS STYLE PATCH SYNC
 # ==================================================
 @sio.event
+async def join(sid, data):
+    print(f"\n{'='*50}")
+    print(f"🚪 JOIN EVENT RECEIVED")
+    print(f"   SID: {sid}")
+    print(f"   Data: {data}")
+    print(f"{'='*50}")
+    
+    if not isinstance(data, dict) or "room" not in data:
+        print("❌ Invalid join payload")
+        await sio.emit("join_error", {"msg": "invalid join payload"}, room=sid)
+        return
+
+    room = data["room"]
+    doc = rooms_collection.find_one({"room": room})
+
+    if not doc:
+        print(f"❌ Room {room} does not exist in DB")
+        await sio.emit("join_error", {"msg": "room does not exist"}, room=sid)
+        return
+
+    # CRITICAL FIX: AWAIT the enter_room call
+    await sio.enter_room(sid, room)  # ✅ Added await!
+    print(f"✅ Socket {sid} entered room '{room}'")
+    
+    # Check who's in the room now
+    try:
+        namespace_rooms = sio.manager.rooms.get('/', {})
+        if room in namespace_rooms:
+            room_sids = namespace_rooms[room]
+            print(f"👥 Sockets in room '{room}': {room_sids}")
+            print(f"📊 Total: {len(room_sids)} socket(s)")
+        else:
+
+            print(f"   Available rooms: {list(rooms.keys())}")
+    except Exception as e:
+        print(f"⚠️ Error checking room members: {e}")
+
+    # Send comments
+    comments = list(comments_collection.find({"room": room}, {"_id": 0}).sort("timestamp", 1))
+    await sio.emit("room_history", comments, room=sid)
+    print(f"📨 Sent room_history to {sid}")
+
+    # Send canonical full document
+    canonical_text = doc.get("content", "")
+    await sio.emit("editor_full", {"content": canonical_text}, room=sid)
+    print(f"📨 Sent editor_full to {sid} (length: {len(canonical_text)})")
+    print(f"{'='*50}\n")
+
+@sio.event
 async def editor_broadcast(sid, data):
-    print("🔥 PATCH RECEIVED:", data)
+    print(f"\n{'='*50}")
+    print(f"📡 EDITOR_BROADCAST RECEIVED")
+    print(f"   From SID: {sid}")
+    print(f"   Data: {data}")
+    print(f"{'='*50}")
 
     room = data.get("room")
     if not room:
         print("❌ Patch missing room")
         return
+
+    # Check who's in the room
+    try:
+        namespace_rooms = sio.manager.rooms.get('/', {})
+        if room in namespace_rooms:
+            room_sids = namespace_rooms[room]
+            print(f"👥 Sockets currently in room '{room}': {room_sids}")
+            print(f"📊 Total sockets in room: {len(room_sids)}")
+        else:
+            print(f"⚠️ Room '{room}' not found!")
+            
+            print(f"❌ CANNOT BROADCAST - ROOM DOESN'T EXIST")
+            return
+    except Exception as e:
+        print(f"⚠️ Error checking room: {e}")
 
     try:
         start = int(data.get("start", 0))
@@ -246,16 +293,20 @@ async def editor_broadcast(sid, data):
 
     content = room_doc.get("content", "")
 
-    # Apply patch to server's canonical state (use helper to be safe)
+    # Apply patch to server's canonical state
     new_content = apply_patch(content, start, removedLength, text)
 
     # Save updated canonical content
     rooms_collection.update_one({"room": room}, {"$set": {"content": new_content}})
 
-    print("📌 NEW CONTENT IN DB LENGTH:", len(new_content))
+    print(f"📌 Updated DB content length: {len(new_content)}")
 
-    # Broadcast patch to entire room (including others)
+    # Broadcast patch to entire room
     patch = {"start": start, "removedLength": removedLength, "text": text}
-    print("📤 Broadcasting patch to room:", room, patch)
-    # emit to room (do NOT skip; other clients must receive)
-    await sio.emit("editor_update", patch, room=room)
+    print(f"📤 Broadcasting patch to room '{room}':")
+    print(f"   Patch: {patch}")
+    
+    await sio.emit("editor_update", patch, room=room, skip_sid=sid)
+    
+    print(f"✅ Broadcast completed")
+    print(f"{'='*50}\n")

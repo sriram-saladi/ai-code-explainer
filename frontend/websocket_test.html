@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebSocket Test</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0a0a;
+      color: #00ff00;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    
+    .container {
+      background: #1a1a1a;
+      border: 2px solid #00ff00;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    
+    h2 {
+      color: #00ff00;
+      margin-top: 0;
+    }
+    
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+    
+    .connected {
+      background: #004400;
+      border: 1px solid #00ff00;
+    }
+    
+    .disconnected {
+      background: #440000;
+      border: 1px solid #ff0000;
+      color: #ff0000;
+    }
+    
+    input, button {
+      padding: 10px;
+      margin: 5px 0;
+      font-size: 16px;
+      border-radius: 4px;
+      border: 1px solid #00ff00;
+      background: #0a0a0a;
+      color: #00ff00;
+    }
+    
+    button {
+      cursor: pointer;
+      font-weight: bold;
+    }
+    
+    button:hover {
+      background: #003300;
+    }
+    
+    #log {
+      background: #000;
+      border: 1px solid #00ff00;
+      padding: 15px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 15px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .log-entry {
+      margin: 5px 0;
+      padding: 5px;
+      border-left: 3px solid #00ff00;
+      padding-left: 10px;
+    }
+    
+    .log-sent {
+      border-left-color: #0099ff;
+      color: #0099ff;
+    }
+    
+    .log-received {
+      border-left-color: #00ff00;
+      color: #00ff00;
+    }
+    
+    .log-error {
+      border-left-color: #ff0000;
+      color: #ff0000;
+    }
+    
+    .log-info {
+      border-left-color: #ffaa00;
+      color: #ffaa00;
+    }
+    
+    input {
+      width: 200px;
+    }
+    
+    .timestamp {
+      color: #666;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔌 WebSocket Connection Test</h1>
+  
+  <div class="container">
+    <h2>Connection Status</h2>
+    <div id="status" class="status disconnected">
+      ❌ DISCONNECTED
+    </div>
+    <div>Socket ID: <span id="socketId">—</span></div>
+  </div>
+
+  <div class="container">
+    <h2>Test Room Communication</h2>
+    <div>
+      <input id="roomInput" placeholder="Enter room code" value="TEST123" />
+      <button id="joinBtn">Join Room</button>
+      <button id="leaveBtn" disabled>Leave Room</button>
+    </div>
+    <div style="margin-top: 10px;">
+      Current Room: <span id="currentRoom" style="color: #ffaa00;">—</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Send Test Message</h2>
+    <div>
+      <input id="messageInput" placeholder="Type a test message" />
+      <button id="sendBtn" disabled>Send to Room</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Event Log</h2>
+    <button onclick="clearLog()">Clear Log</button>
+    <div id="log"></div>
+  </div>
+
+  <div class="container">
+    <h2>Instructions</h2>
+    <ol>
+      <li>Open this page in TWO different browser windows (side by side)</li>
+      <li>In BOTH windows, click "Join Room" (using same room code)</li>
+      <li>In Window 1, type a message and click "Send to Room"</li>
+      <li>Check if Window 2 receives the message in the log</li>
+      <li>If Window 2 sees the message → ✅ WebSocket is working!</li>
+      <li>If Window 2 sees nothing → ❌ WebSocket has issues</li>
+    </ol>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    const socket = io("http://127.0.0.1:8000", {
+      transports: ["websocket"],
+      upgrade: false
+    });
+
+    let currentRoom = null;
+
+    // DOM elements
+    const statusEl = document.getElementById("status");
+    const socketIdEl = document.getElementById("socketId");
+    const roomInput = document.getElementById("roomInput");
+    const joinBtn = document.getElementById("joinBtn");
+    const leaveBtn = document.getElementById("leaveBtn");
+    const currentRoomEl = document.getElementById("currentRoom");
+    const messageInput = document.getElementById("messageInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const logEl = document.getElementById("log");
+
+    function addLog(message, type = "info") {
+      const timestamp = new Date().toLocaleTimeString();
+      const entry = document.createElement("div");
+      entry.className = `log-entry log-${type}`;
+      entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearLog() {
+      logEl.innerHTML = "";
+      addLog("Log cleared", "info");
+    }
+
+    function updateStatus(connected) {
+      if (connected) {
+        statusEl.className = "status connected";
+        statusEl.textContent = "✅ CONNECTED";
+      } else {
+        statusEl.className = "status disconnected";
+        statusEl.textContent = "❌ DISCONNECTED";
+      }
+    }
+
+    // Socket event listeners
+    socket.on("connect", () => {
+      addLog(`Connected to server! Socket ID: ${socket.id}`, "info");
+      socketIdEl.textContent = socket.id;
+      updateStatus(true);
+      joinBtn.disabled = false;
+    });
+
+    socket.on("disconnect", () => {
+      addLog("Disconnected from server", "error");
+      socketIdEl.textContent = "—";
+      updateStatus(false);
+      joinBtn.disabled = true;
+      sendBtn.disabled = true;
+      leaveBtn.disabled = true;
+      currentRoom = null;
+      currentRoomEl.textContent = "—";
+    });
+
+    socket.on("connect_error", (error) => {
+      addLog(`Connection error: ${error.message}`, "error");
+    });
+
+    socket.on("room_history", (docs) => {
+      addLog(`Received room history: ${docs.length} items`, "received");
+      docs.forEach(doc => {
+        addLog(`History: ${doc.author}: ${doc.text}`, "info");
+      });
+    });
+
+    socket.on("join_error", (data) => {
+      addLog(`Join error: ${data.msg}`, "error");
+      alert(`Failed to join: ${data.msg}`);
+    });
+
+    socket.on("editor_full", (msg) => {
+      addLog(`Received editor_full: content length = ${msg.content.length}`, "received");
+    });
+
+    socket.on("editor_update", (patch) => {
+      addLog(`📥 RECEIVED PATCH: start=${patch.start}, removed=${patch.removedLength}, text="${patch.text}"`, "received");
+      addLog(`✅ This proves WebSocket broadcasting is working!`, "info");
+    });
+
+    socket.on("new_comment", (data) => {
+      addLog(`📩 NEW COMMENT from ${data.author}: ${data.text}`, "received");
+    });
+
+    // Join room
+    joinBtn.onclick = () => {
+      const room = roomInput.value.trim();
+      if (!room) {
+        alert("Enter a room code!");
+        return;
+      }
+
+      if (currentRoom) {
+        socket.emit("leave", { room: currentRoom });
+        addLog(`Left room: ${currentRoom}`, "info");
+      }
+
+      addLog(`Attempting to join room: ${room}`, "sent");
+      socket.emit("join", { room: room });
+      currentRoom = room;
+      currentRoomEl.textContent = room;
+      
+      joinBtn.disabled = true;
+      leaveBtn.disabled = false;
+      sendBtn.disabled = false;
+    };
+
+    // Leave room
+    leaveBtn.onclick = () => {
+      if (currentRoom) {
+        socket.emit("leave", { room: currentRoom });
+        addLog(`Left room: ${currentRoom}`, "info");
+        currentRoom = null;
+        currentRoomEl.textContent = "—";
+        joinBtn.disabled = false;
+        leaveBtn.disabled = true;
+        sendBtn.disabled = true;
+      }
+    };
+
+    // Send test message
+    sendBtn.onclick = () => {
+      const message = messageInput.value.trim();
+      if (!message || !currentRoom) return;
+
+      addLog(`📤 SENDING: editor_broadcast with text="${message}"`, "sent");
+      
+      socket.emit("editor_broadcast", {
+        room: currentRoom,
+        start: 0,
+        removedLength: 0,
+        text: message
+      });
+
+      messageInput.value = "";
+    };
+
+    // Allow Enter key to send
+    messageInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter" && !sendBtn.disabled) {
+        sendBtn.click();
+      }
+    });
+
+    roomInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter" && !joinBtn.disabled) {
+        joinBtn.click();
+      }
+    });
+
+    // Initial log
+    addLog("WebSocket test initialized. Waiting for connection...", "info");
+  </script>
+</body>
+</html>
