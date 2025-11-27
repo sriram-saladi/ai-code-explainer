@@ -1,4 +1,3 @@
-# backend/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,6 +13,7 @@ from pymongo import MongoClient
 import socketio
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from auth import router as auth_router
 
 # ==================================================
 # Load environment variables
@@ -44,6 +44,7 @@ sio = socketio.AsyncServer(
     async_mode="asgi"
 )
 fastapi_app = FastAPI()
+fastapi_app.include_router(auth_router)
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
