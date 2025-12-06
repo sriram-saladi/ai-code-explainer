@@ -6,7 +6,7 @@ export default function Login() {
   const { saveToken } = useContext(AuthContext);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -85,6 +85,7 @@ export default function Login() {
           </p>
         </div>
 
+        {/* EMAIL FIELD */}
         <div style={{ marginBottom: "20px" }}>
           <label style={{
             display: "block",
@@ -107,14 +108,14 @@ export default function Login() {
               borderRadius: "8px",
               border: "1px solid #e2e8f0",
               fontSize: "15px",
-              transition: "all 0.2s ease",
               backgroundColor: "#fff",
               color: "#2d3748"
             }}
           />
         </div>
 
-        <div style={{ marginBottom: "16px" }}>
+        {/* PASSWORD FIELD WITH EYE ICON */}
+        <div style={{ marginBottom: "16px", position: "relative" }}>
           <label style={{
             display: "block",
             fontWeight: "600",
@@ -124,8 +125,9 @@ export default function Login() {
           }}>
             Password
           </label>
+
           <input
-            type="password"
+            type={showPassword ? "text" : "password"}
             placeholder="Enter your password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -133,43 +135,50 @@ export default function Login() {
             style={{
               width: "100%",
               padding: "12px 14px",
+              paddingRight: "45px",
               borderRadius: "8px",
               border: "1px solid #e2e8f0",
               fontSize: "15px",
-              transition: "all 0.2s ease",
               backgroundColor: "#fff",
               color: "#2d3748"
             }}
           />
+
+          {/* Eye Toggle Icon */}
+          <span
+            onClick={() => setShowPassword(!showPassword)}
+            style={{
+              position: "absolute",
+              right: "14px",
+              top: "42px",
+              transform: "translateY(-50%)",
+              cursor: "pointer",
+              color: "#8e8e8e",
+              userSelect: "none",
+              display: "flex",
+              alignItems: "center"
+            }}
+          >
+            {showPassword ? (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                <line x1="1" y1="1" x2="23" y2="23"></line>
+              </svg>
+            ) : (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            )}
+          </span>
         </div>
 
+        {/* FORGOT PASSWORD */}
         <div style={{
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          justifyContent: "flex-end",
           marginBottom: "24px"
         }}>
-          <label style={{
-            display: "flex",
-            alignItems: "center",
-            cursor: "pointer",
-            fontSize: "14px",
-            color: "#4a5568"
-          }}>
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              style={{
-                width: "16px",
-                height: "16px",
-                marginRight: "8px",
-                cursor: "pointer",
-                accentColor: "#667eea"
-              }}
-            />
-            Remember me
-          </label>
           <a href="#" style={{
             color: "#667eea",
             fontWeight: "500",
@@ -180,6 +189,7 @@ export default function Login() {
           </a>
         </div>
 
+        {/* LOGIN BUTTON */}
         <button
           onClick={handleLogin}
           disabled={isLoading}
@@ -192,23 +202,13 @@ export default function Login() {
             fontSize: "16px",
             fontWeight: "600",
             border: "none",
-            cursor: "pointer",
-            transition: "all 0.2s ease"
-          }}
-          onMouseOver={(e) => {
-            if (!isLoading) {
-              e.target.style.transform = "translateY(-1px)";
-              e.target.style.boxShadow = "0 4px 12px rgba(102, 126, 234, 0.4)";
-            }
-          }}
-          onMouseOut={(e) => {
-            e.target.style.transform = "translateY(0)";
-            e.target.style.boxShadow = "none";
+            cursor: "pointer"
           }}
         >
           {isLoading ? "Signing in..." : "Log in"}
         </button>
 
+        {/* SIGNUP LINK */}
         <div style={{
           textAlign: "center",
           marginTop: "24px",
