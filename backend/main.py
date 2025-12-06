@@ -14,6 +14,7 @@ import socketio
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from auth import router as auth_router
+import time
 
 # ==================================================
 # Load environment variables
@@ -34,22 +35,20 @@ db = client["code_explainer"]
 
 history_collection = db["history"]
 comments_collection = db["comments"]
-rooms_collection = db["rooms"]     # Stores room code + canonical doc content
+rooms_collection = db["rooms"]
 
 # ==================================================
 # FastAPI + Socket.IO Setup
 # ==================================================
-sio = socketio.AsyncServer(
-    cors_allowed_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
-    async_mode="asgi"
-)
 fastapi_app = FastAPI()
 fastapi_app.include_router(auth_router)
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
 
-fastapi_app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
+# Only mount if frontend directory exists
+if FRONTEND_DIR.exists():
+    fastapi_app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 
 fastapi_app.add_middleware(
     CORSMiddleware,
@@ -59,7 +58,11 @@ fastapi_app.add_middleware(
     allow_headers=["*"],
 )
 
-app = socketio.ASGIApp(sio, fastapi_app)
+# Socket.IO setup (only once!)
+sio = socketio.AsyncServer(
+    cors_allowed_origins="*",
+    async_mode="asgi"
+)
 
 # ==================================================
 # Request Models
@@ -83,7 +86,11 @@ def create_room():
     for _ in range(20):
         code = generate_room_code()
         if not rooms_collection.find_one({"room": code}):
-            rooms_collection.insert_one({"room": code, "created": datetime.utcnow(), "content": ""})
+            rooms_collection.insert_one({
+                "room": code,
+                "created": datetime.utcnow(),
+                "content": ""
+            })
             return {"room": code}
     raise HTTPException(500, "Could not generate unique room code")
 
@@ -92,60 +99,99 @@ def validate_room(room_code: str):
     return {"valid": bool(rooms_collection.find_one({"room": room_code}))}
 
 # ==================================================
-# LLM Endpoint (optional)
+# Rate limiting helper
+# ==================================================
+last_api_call = {"time": 0}
+MIN_API_INTERVAL = 4  # 4 seconds between calls
+
+def check_rate_limit():
+    now = time.time()
+    time_since_last = now - last_api_call["time"]
+
+    if time_since_last < MIN_API_INTERVAL:
+        wait_time = MIN_API_INTERVAL - time_since_last
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit: Please wait {wait_time:.1f} seconds before next request"
+        )
+
+    last_api_call["time"] = now
+
+# ==================================================
+# LLM Endpoint with Better Error Handling
 # ==================================================
 @fastapi_app.post("/process-code")
 def process_code(req: CodeRequest):
     if not genai_api_key:
         raise HTTPException(500, "Gemini API key not configured")
 
-    model = genai.GenerativeModel("models/gemini-2.5-flash")
+    check_rate_limit()
 
+    # Define prompt BEFORE try/except
     prompt = f"""
-Return only valid JSON like this:
+You are a code explanation expert. Return ONLY valid JSON with no markdown, no backticks, no extra text.
 
+Structure:
 {{
- "code": "...",
- "what_it_does": "...",
- "visual_flow": "...",
- "steps": "...",
- "key_idea": "...",
- "output": "..."
+  "code": "the code",
+  "what_it_does": "brief explanation",
+  "visual_flow": "execution flow",
+  "steps": "breakdown of steps",
+  "key_idea": "main concept",
+  "output": "expected output"
 }}
 
-User wants to {req.action} this code:
+Action: {req.action}
 
+Code:
 {req.code}
 """
 
-    response = model.generate_content(prompt)
-    text = response.text.strip()
-    cleaned = re.sub(r"```json|```", "", text).strip()
-
     try:
+        model = genai.GenerativeModel("gemini-2.0-flash")
+
+        print("🔄 Sending to Gemini (model: gemini-2.0-flash)...")
+        response = model.generate_content(prompt)
+
+        if not response or not response.text:
+            raise HTTPException(500, "Empty response from API")
+
+        text = response.text.strip()
+        cleaned = re.sub(r"```json|```", "", text).strip()
+
         parsed = json.loads(cleaned)
-    except Exception:
+
         history_collection.insert_one({
             "code": req.code,
             "action": req.action,
-            "raw_response": response.text,
+            "timestamp": datetime.utcnow(),
+            "result": parsed
+        })
+
+        return {"result": parsed}
+
+    except Exception as e:
+        error_msg = str(e)
+        print("❌ Error:", error_msg)
+
+        history_collection.insert_one({
+            "code": req.code,
+            "action": req.action,
+            "prompt": prompt,
+            "error": error_msg,
             "timestamp": datetime.utcnow()
         })
-        return {"error": "Model did not return valid JSON", "raw": response.text}
 
-    history_collection.insert_one({
-        "code": req.code,
-        "action": req.action,
-        "timestamp": datetime.utcnow(),
-        "result": parsed
-    })
+        raise HTTPException(500, f"Failed: {error_msg}")
 
-    return {"result": parsed}
-
+# ==================================================
+# History
+# ==================================================
 @fastapi_app.get("/history")
 def get_history():
-    rec = list(history_collection.find({}, {"_id": 0}))
-    return {"history": rec}
+    records = list(history_collection.find({}, {"_id": 0})
+                   .sort("timestamp", -1).limit(50))
+    return {"history": records}
 
 # ==================================================
 # SOCKET.IO EVENTS
@@ -158,11 +204,10 @@ async def connect(sid, environ):
 async def disconnect(sid):
     print(f"❌ Client disconnected {sid}")
 
-
 @sio.event
 async def leave(sid, data):
     if isinstance(data, dict) and "room" in data:
-        await sio.leave_room(sid, data["room"])  # ✅ Added await!
+        await sio.leave_room(sid, data["room"])
         print(f"{sid} left room {data['room']}")
 
 @sio.event
@@ -170,11 +215,14 @@ async def comment(sid, data):
     if not isinstance(data, dict):
         return
     room = data.get("room")
-    text = data.get("text")
-    if not room or not text:
+    text = data.get("text", "").trim() if hasattr(str, "trim") else data.get("text", "").strip()
+
+    if not room or not text or len(text) > 1000:
         return
+
     if not rooms_collection.find_one({"room": room}):
         return
+
     comment_doc = {
         "room": room,
         "author": data.get("author", "User"),
@@ -184,32 +232,21 @@ async def comment(sid, data):
     comments_collection.insert_one(comment_doc)
     await sio.emit("new_comment", comment_doc, room=room)
 
-# ==================================================
-# Apply patch helper
-# ==================================================
+# Patch helper
 def apply_patch(content: str, start: int, removed: int, new_text: str) -> str:
-    if start < 0: start = 0
-    if removed < 0: removed = 0
-    if start > len(content):
-        start = len(content)
-    end = start + removed
-    if end > len(content):
-        end = len(content)
+    start = max(0, min(start, len(content)))
+    removed = max(0, removed)
+    end = min(start + removed, len(content))
     return content[:start] + new_text + content[end:]
 
 # ==================================================
-# GOOGLE DOCS STYLE PATCH SYNC
+# COLLABORATIVE EDITING
 # ==================================================
 @sio.event
 async def join(sid, data):
-    print(f"\n{'='*50}")
-    print(f"🚪 JOIN EVENT RECEIVED")
-    print(f"   SID: {sid}")
-    print(f"   Data: {data}")
-    print(f"{'='*50}")
-    
+    print(f"🚪 JOIN: {sid} → {data.get('room')}")
+
     if not isinstance(data, dict) or "room" not in data:
-        print("❌ Invalid join payload")
         await sio.emit("join_error", {"msg": "invalid join payload"}, room=sid)
         return
 
@@ -217,97 +254,60 @@ async def join(sid, data):
     doc = rooms_collection.find_one({"room": room})
 
     if not doc:
-        print(f"❌ Room {room} does not exist in DB")
         await sio.emit("join_error", {"msg": "room does not exist"}, room=sid)
         return
 
-    # CRITICAL FIX: AWAIT the enter_room call
-    await sio.enter_room(sid, room)  # ✅ Added await!
-    print(f"✅ Socket {sid} entered room '{room}'")
-    
-    # Check who's in the room now
-    try:
-        namespace_rooms = sio.manager.rooms.get('/', {})
-        if room in namespace_rooms:
-            room_sids = namespace_rooms[room]
-            print(f"👥 Sockets in room '{room}': {room_sids}")
-            print(f"📊 Total: {len(room_sids)} socket(s)")
-        else:
+    await sio.enter_room(sid, room)
+    print(f"✅ {sid} entered room '{room}'")
 
-            print(f"   Available rooms: {list(rooms.keys())}")
-    except Exception as e:
-        print(f"⚠️ Error checking room members: {e}")
-
-    # Send comments
-    comments = list(comments_collection.find({"room": room}, {"_id": 0}).sort("timestamp", 1))
+    # Send comment history
+    comments = list(comments_collection.find(
+        {"room": room},
+        {"_id": 0}
+    ).sort("timestamp", 1))
     await sio.emit("room_history", comments, room=sid)
-    print(f"📨 Sent room_history to {sid}")
 
-    # Send canonical full document
+    # Send document content
     canonical_text = doc.get("content", "")
     await sio.emit("editor_full", {"content": canonical_text}, room=sid)
-    print(f"📨 Sent editor_full to {sid} (length: {len(canonical_text)})")
-    print(f"{'='*50}\n")
+    print(f"📨 Sent content to {sid} ({len(canonical_text)} chars)")
 
 @sio.event
 async def editor_broadcast(sid, data):
-    print(f"\n{'='*50}")
-    print(f"📡 EDITOR_BROADCAST RECEIVED")
-    print(f"   From SID: {sid}")
-    print(f"   Data: {data}")
-    print(f"{'='*50}")
+    print(f"📡 EDIT from {sid}")
 
     room = data.get("room")
     if not room:
-        print("❌ Patch missing room")
         return
-
-    # Check who's in the room
-    try:
-        namespace_rooms = sio.manager.rooms.get('/', {})
-        if room in namespace_rooms:
-            room_sids = namespace_rooms[room]
-            print(f"👥 Sockets currently in room '{room}': {room_sids}")
-            print(f"📊 Total sockets in room: {len(room_sids)}")
-        else:
-            print(f"⚠️ Room '{room}' not found!")
-            
-            print(f"❌ CANNOT BROADCAST - ROOM DOESN'T EXIST")
-            return
-    except Exception as e:
-        print(f"⚠️ Error checking room: {e}")
 
     try:
         start = int(data.get("start", 0))
         removedLength = int(data.get("removedLength", 0))
-    except Exception:
-        print("❌ invalid start/removedLength in patch:", data)
+    except:
+        print("❌ Invalid patch data")
         return
 
     text = data.get("text", "")
 
-    # Fetch current authoritative content
     room_doc = rooms_collection.find_one({"room": room})
     if not room_doc:
-        print("❌ room not found in DB during patch")
         return
 
     content = room_doc.get("content", "")
-
-    # Apply patch to server's canonical state
     new_content = apply_patch(content, start, removedLength, text)
 
-    # Save updated canonical content
     rooms_collection.update_one({"room": room}, {"$set": {"content": new_content}})
 
-    print(f"📌 Updated DB content length: {len(new_content)}")
+    patch = {
+        "start": start,
+        "removedLength": removedLength,
+        "text": text
+    }
 
-    # Broadcast patch to entire room
-    patch = {"start": start, "removedLength": removedLength, "text": text}
-    print(f"📤 Broadcasting patch to room '{room}':")
-    print(f"   Patch: {patch}")
-    
     await sio.emit("editor_update", patch, room=room, skip_sid=sid)
-    
-    print(f"✅ Broadcast completed")
-    print(f"{'='*50}\n")
+    print(f"✅ Broadcast to room '{room}'")
+
+# ==================================================
+# WRAP BOTH APPS TOGETHER
+# ==================================================
+app = socketio.ASGIApp(sio, fastapi_app)

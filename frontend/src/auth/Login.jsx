@@ -1,212 +1,229 @@
-// frontend/src/auth/Login.jsx
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "./AuthContext";
-
-const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
 export default function Login() {
   const { saveToken } = useContext(AuthContext);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
+  const [rememberMe, setRememberMe] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  // Initialize Google button
-  useEffect(() => {
-    if (window.google && GOOGLE_CLIENT_ID) {
-      window.google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: handleGoogleResponse,
+  const handleLogin = async () => {
+    if (!email || !password) {
+      alert("Please fill in all fields");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await fetch("http://127.0.0.1:8000/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
       });
 
-      window.google.accounts.id.renderButton(
-        document.getElementById("googleSignInDiv"),
-        {
-          theme: "outline",
-          size: "large",
-          width: "340",
-        }
-      );
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.detail || "Invalid credentials");
+        return;
+      }
+
+      saveToken(data.token, data.user);
+      navigate("/join");
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
-
-  // Google login callback
-  const handleGoogleResponse = async (response) => {
-    const googleToken = response.credential;
-
-    const res = await fetch("http://127.0.0.1:8000/auth/google", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id_token: googleToken }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      alert("Google login failed");
-      return;
-    }
-
-    saveToken(data.token, data.user);
-    window.location.href = "http://127.0.0.1:8000/frontend/join.html";
   };
 
-  // Normal login
-  const handleLogin = async () => {
-    const res = await fetch("http://127.0.0.1:8000/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      alert(data.detail || "Invalid credentials");
-      return;
-    }
-
-    saveToken(data.token, data.user);
-    window.location.href = "/html/join.html";
-};
-
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        background: "linear-gradient(to bottom right, #e8fff3, #d4fce7)",
-        padding: "20px",
-      }}
-    >
-      <div
-        style={{
-          width: "480px",
-          background: "#ffffff",
-          padding: "35px",
-          borderRadius: "16px",
-          boxShadow: "0px 4px 20px rgba(0,0,0,0.08)",
-        }}
-      >
-        <h1 style={{ textAlign: "center", marginBottom: "6px", color: "#0f5132" }}>
-          Welcome back
-        </h1>
-        <p style={{ textAlign: "center", color: "#3d7a58", marginBottom: "20px" }}>
-          Sign in to your account
-        </p>
+    <div style={{
+      minHeight: "100vh",
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+      padding: "20px",
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    }}>
+      <style>{`
+        input:focus {
+          outline: none;
+          border-color: #667eea;
+          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+      `}</style>
 
-        {/* ⭐ Your screenshot preview image */}
-        <img
-          src="/images/login-preview.png"
-          alt="preview"
-          style={{
-            width: "100%",
-            borderRadius: "12px",
-            marginBottom: "22px",
-            border: "1px solid #e4e4e4",
-          }}
-        />
+      <div style={{
+        width: "420px",
+        background: "#ffffff",
+        padding: "40px",
+        borderRadius: "16px",
+        boxShadow: "0 10px 40px rgba(0, 0, 0, 0.1)"
+      }}>
+        
+        <div style={{ textAlign: "center", marginBottom: "32px" }}>
+          <h1 style={{
+            fontSize: "28px",
+            fontWeight: "700",
+            color: "#1a202c",
+            marginBottom: "8px"
+          }}>
+            Welcome back
+          </h1>
+          <p style={{
+            color: "#718096",
+            fontSize: "15px"
+          }}>
+            Log in to your account
+          </p>
+        </div>
 
-        {/* Email */}
         <div style={{ marginBottom: "20px" }}>
-          <label style={{ fontWeight: 600 }}>Email address</label>
+          <label style={{
+            display: "block",
+            fontWeight: "600",
+            fontSize: "14px",
+            color: "#2d3748",
+            marginBottom: "8px"
+          }}>
+            Email address
+          </label>
           <input
             type="email"
             placeholder="Enter your email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && handleLogin()}
             style={{
               width: "100%",
-              marginTop: "6px",
-              padding: "12px",
+              padding: "12px 14px",
               borderRadius: "8px",
-              border: "1px solid #cbd5e1",
-              fontSize: "14px",
+              border: "1px solid #e2e8f0",
+              fontSize: "15px",
+              transition: "all 0.2s ease",
+              backgroundColor: "#fff",
+              color: "#2d3748"
             }}
           />
         </div>
 
-        {/* Password */}
-        <div style={{ marginBottom: "12px" }}>
-          <label style={{ fontWeight: 600 }}>Password</label>
+        <div style={{ marginBottom: "16px" }}>
+          <label style={{
+            display: "block",
+            fontWeight: "600",
+            fontSize: "14px",
+            color: "#2d3748",
+            marginBottom: "8px"
+          }}>
+            Password
+          </label>
           <input
             type="password"
             placeholder="Enter your password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && handleLogin()}
             style={{
               width: "100%",
-              marginTop: "6px",
-              padding: "12px",
+              padding: "12px 14px",
               borderRadius: "8px",
-              border: "1px solid #cbd5e1",
-              fontSize: "14px",
+              border: "1px solid #e2e8f0",
+              fontSize: "15px",
+              transition: "all 0.2s ease",
+              backgroundColor: "#fff",
+              color: "#2d3748"
             }}
           />
         </div>
 
-        {/* Remember + Forgot */}
-        <div
-          style={{
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "24px"
+        }}>
+          <label style={{
             display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "18px",
-          }}
-        >
-          <label>
-            <input type="checkbox" /> Remember me
+            alignItems: "center",
+            cursor: "pointer",
+            fontSize: "14px",
+            color: "#4a5568"
+          }}>
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{
+                width: "16px",
+                height: "16px",
+                marginRight: "8px",
+                cursor: "pointer",
+                accentColor: "#667eea"
+              }}
+            />
+            Remember me
           </label>
-          <a href="#" style={{ color: "#1e8f55", fontWeight: 500 }}>
-            Forgot your password?
+          <a href="#" style={{
+            color: "#667eea",
+            fontWeight: "500",
+            fontSize: "14px",
+            textDecoration: "none"
+          }}>
+            Forgot password?
           </a>
         </div>
 
-        {/* Sign in button */}
         <button
           onClick={handleLogin}
+          disabled={isLoading}
           style={{
             width: "100%",
-            background: "#1e8f55",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
             color: "#fff",
-            padding: "12px",
+            padding: "13px",
             borderRadius: "8px",
             fontSize: "16px",
+            fontWeight: "600",
             border: "none",
             cursor: "pointer",
+            transition: "all 0.2s ease"
+          }}
+          onMouseOver={(e) => {
+            if (!isLoading) {
+              e.target.style.transform = "translateY(-1px)";
+              e.target.style.boxShadow = "0 4px 12px rgba(102, 126, 234, 0.4)";
+            }
+          }}
+          onMouseOut={(e) => {
+            e.target.style.transform = "translateY(0)";
+            e.target.style.boxShadow = "none";
           }}
         >
-          Sign in
+          {isLoading ? "Signing in..." : "Log in"}
         </button>
 
-        <div
-          style={{
-            textAlign: "center",
-            margin: "18px 0",
-            color: "#64748b",
-            fontSize: "14px",
-          }}
-        >
-          — Or continue with —
-        </div>
-
-        {/* ⭐ Google Sign-In Button */}
-        <div
-          id="googleSignInDiv"
-          style={{ display: "flex", justifyContent: "center", marginBottom: "10px" }}
-        ></div>
-
-        {/* Signup link */}
-        <div style={{ textAlign: "center", marginTop: "20px" }}>
-          Don’t have an account?{" "}
-          <a href="/signup" style={{ color: "#1e8f55", fontWeight: 600 }}>
-            Sign up here
+        <div style={{
+          textAlign: "center",
+          marginTop: "24px",
+          fontSize: "14px",
+          color: "#718096"
+        }}>
+          Don't have an account?{" "}
+          <a href="/signup" style={{
+              color: "#667eea",
+              fontWeight: "600",
+              textDecoration: "none"
+            }}>
+            Sign up
           </a>
         </div>
-
-        {/* Load Google script */}
-        <script src="https://accounts.google.com/gsi/client" async defer></script>
       </div>
     </div>
   );
