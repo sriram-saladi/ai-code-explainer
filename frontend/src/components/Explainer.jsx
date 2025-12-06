@@ -1,234 +1,302 @@
-import React, { useEffect, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
 import { io } from "socket.io-client";
 
 const BASE = "http://127.0.0.1:8000";
 
-export default function Explainer() {
-  const [searchParams] = useSearchParams();
-  const room = searchParams.get("room");
-  const navigate = useNavigate();
-
-  const [socket, setSocket] = useState(null);
+export default function CodeExplainer() {
+  const [room, setRoom] = useState("ROOM");
   const [code, setCode] = useState("");
-  const [action, setAction] = useState("explain");
-  const [result, setResult] = useState(null);
-  const [comments, setComments] = useState([]);
+  const [explanation, setExplanation] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Comments
+  const [socket, setSocket] = useState(null);
   const [commentText, setCommentText] = useState("");
-  const [status, setStatus] = useState("Connecting...");
+  const [comments, setComments] = useState([]);
 
+  // Load room from URL
   useEffect(() => {
-    if (!room) {
-      alert("No room provided. Redirecting to Join page.");
-      navigate("/join");
-      return;
-    }
+    const params = new URLSearchParams(window.location.search);
+    const r = params.get("room");
+    if (r) setRoom(r);
+  }, []);
 
-    const newSocket = io(BASE, { transports: ["websocket"] });
-    setSocket(newSocket);
+  // Initialize socket
+  useEffect(() => {
+    const s = io(BASE, { transports: ["websocket"] });
+    setSocket(s);
 
-    newSocket.on("connect", () => {
-      console.log("Socket connected:", newSocket.id);
-      newSocket.emit("join", { room });
+    s.on("connect", () => {
+      console.log("🔌 Connected:", s.id);
+      s.emit("join", { room });
     });
 
-    newSocket.on("join_error", (d) => {
-      setStatus(d.msg || "Join failed");
-      alert("Join failed: " + (d.msg || "unknown"));
-      navigate("/join");
-    });
-
-    newSocket.on("room_history", (docs) => {
-      setStatus("Joined room: " + room);
+    s.on("room_history", (docs) => {
       setComments(docs);
     });
 
-    newSocket.on("new_comment", (doc) => {
+    s.on("new_comment", (doc) => {
       setComments((prev) => [...prev, doc]);
     });
 
-    return () => newSocket.close();
-  }, [room, navigate]);
+    return () => s.close();
+  }, [room]);
 
-  const sendCode = async () => {
+  // ---- PROCESS CODE WITH BACKEND ----
+  const handleExplain = async () => {
+    if (!code.trim()) {
+      alert("Please enter code!");
+      return;
+    }
+
+    setIsLoading(true);
     try {
       const res = await fetch(`${BASE}/process-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, action })
+        body: JSON.stringify({ code, action: "explain" }),
       });
+
       const data = await res.json();
 
       if (data.error) {
-        setResult({ error: data.error });
-      } else {
-        setResult(data.result);
+        alert("LLM Error: " + data.error);
+        setIsLoading(false);
+        return;
       }
+
+      setExplanation(data.result);
     } catch (err) {
-      setResult({ error: "Failed to process code" });
+      alert("Request failed: " + err.message);
     }
+
+    setIsLoading(false);
   };
 
+  // ---- SEND COMMENT ----
   const sendComment = () => {
     if (!commentText.trim() || !socket) return;
+
     socket.emit("comment", {
       room,
       author: "User",
-      text: commentText
+      text: commentText,
     });
+
     setCommentText("");
   };
 
   return (
-    <div style={{
-      fontFamily: "Inter, Arial",
-      background: "#0f0f10",
-      color: "#fff",
-      padding: "20px",
-      display: "flex",
-      gap: "30px",
-      minHeight: "100vh"
-    }}>
-      <div style={{ width: "55%" }}>
-        <h2>Code Explainer (Gemini + FastAPI)</h2>
-        <h3>Room: {room}</h3>
-
-        <textarea
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="Paste your code here"
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg,#667eea,#764ba2)",
+        padding: 25,
+        fontFamily: "Inter, sans-serif",
+      }}
+    >
+      <div style={{ maxWidth: 1400, margin: "0 auto" }}>
+        {/* HEADER */}
+        <div
           style={{
-            width: "100%",
-            minHeight: "160px",
-            padding: "12px",
-            borderRadius: "8px",
-            background: "#1a1a1b",
-            color: "#ddd",
-            border: "1px solid #252526",
-            fontFamily: "monospace",
-            fontSize: "14px"
+            background: "rgba(0,0,0,0.3)",
+            padding: "20px 30px",
+            borderRadius: "16px 16px 0 0",
+            display: "flex",
+            justifyContent: "space-between",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderBottom: "none",
           }}
-        />
-
-        <div style={{ marginTop: "12px" }}>
-          <input
-            type="text"
-            value={action}
-            onChange={(e) => setAction(e.target.value)}
-            placeholder="e.g. explain or optimize"
-            style={{
-              padding: "8px",
-              width: "60%",
-              borderRadius: "6px",
-              border: "1px solid #333",
-              background: "#1a1a1b",
-              color: "#fff"
-            }}
-          />
-          <button
-            onClick={sendCode}
-            style={{
-              background: "#1976d2",
-              color: "#fff",
-              border: "none",
-              padding: "8px 12px",
-              borderRadius: "6px",
-              cursor: "pointer",
-              marginLeft: "8px"
-            }}
-          >
-            Send
-          </button>
+        >
+          <div>
+            <h1 style={{ color: "#fff", margin: 0 }}>🤖 Code Explainer</h1>
+            <p style={{ color: "#ddd", margin: 0 }}>
+              Room: <b style={{ fontFamily: "monospace" }}>{room}</b>
+            </p>
+          </div>
         </div>
 
-        {result && (
-          <div style={{ marginTop: "20px" }}>
-            <h3>Response:</h3>
-            {result.error ? (
-              <p style={{ color: "red" }}>{result.error}</p>
-            ) : (
-              <div>
-                <h4>Code</h4>
-                <pre style={{ background: "#111", padding: "12px", borderRadius: "6px", whiteSpace: "pre-wrap", overflow: "auto" }}>
-                  {result.code}
-                </pre>
-                <h4>What it Does</h4>
-                <p>{result.what_it_does}</p>
-                <h4>Visual Flow</h4>
-                <pre style={{ background: "#111", padding: "12px", borderRadius: "6px", whiteSpace: "pre-wrap", overflow: "auto" }}>
-                  {result.visual_flow}
-                </pre>
-                <h4>Steps</h4>
-                <pre style={{ background: "#111", padding: "12px", borderRadius: "6px", whiteSpace: "pre-wrap", overflow: "auto" }}>
-                  {result.steps}
-                </pre>
-                <h4>Key Idea</h4>
-                <p>{result.key_idea}</p>
-                <h4>Output</h4>
-                <pre style={{ background: "#111", padding: "12px", borderRadius: "6px", whiteSpace: "pre-wrap", overflow: "auto" }}>
-                  {result.output}
-                </pre>
+        {/* MAIN GRID */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "70% 30%",
+            background: "#16161f",
+            border: "1px solid rgba(255,255,255,0.15)",
+          }}
+        >
+          {/* LEFT SIDE - EDITOR + AI RESULT */}
+          <div style={{ borderRight: "1px solid rgba(255,255,255,0.1)" }}>
+            <div
+              style={{
+                background: "#1f1f2e",
+                padding: 15,
+                borderBottom: "1px solid rgba(255,255,255,0.1)",
+              }}
+            >
+              <h3 style={{ color: "#fff", margin: 0 }}>📝 Code Editor</h3>
+            </div>
+
+            <textarea
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Paste your code here..."
+              style={{
+                width: "100%",
+                height: "350px",
+                padding: 20,
+                background: "#0d0d12",
+                color: "#eee",
+                border: "none",
+                resize: "none",
+                fontFamily: "Fira Code, monospace",
+              }}
+            />
+
+            {/* AI RESULT */}
+            {explanation && (
+              <div
+                style={{
+                  padding: 20,
+                  background: "#0d0d12",
+                  borderTop: "1px solid rgba(255,255,255,0.1)",
+                  maxHeight: 350,
+                  overflowY: "auto",
+                }}
+              >
+                <h3 style={{ color: "#8b8bff" }}>✨ AI Explanation</h3>
+
+                <Section title="What it does" value={explanation.what_it_does} />
+                <Section title="Visual Flow" value={explanation.visual_flow} />
+                <Section title="Steps" value={explanation.steps} />
+                <Section title="Key Idea" value={explanation.key_idea} />
+                <Section title="Output" value={explanation.output} />
               </div>
             )}
           </div>
-        )}
-      </div>
 
-      <div style={{ width: "40%" }}>
-        <h3>Comments</h3>
-        <div style={{
-          border: "1px solid #222",
-          padding: "12px",
-          minHeight: "160px",
-          background: "#0b0b0b",
-          overflow: "auto",
-          borderRadius: "6px",
-          maxHeight: "400px"
-        }}>
-          {comments.length === 0 ? (
-            <p style={{ color: "#666" }}>No comments yet</p>
-          ) : (
-            comments.map((c, i) => (
-              <div key={i} style={{ padding: "6px 0", borderBottom: "1px solid #222" }}>
-                <b style={{ color: "#9ad" }}>{c.author}:</b> {c.text}
-              </div>
-            ))
-          )}
+          {/* RIGHT SIDE - COMMENTS */}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div
+              style={{
+                padding: 15,
+                background: "#1f1f2e",
+                borderBottom: "1px solid rgba(255,255,255,0.1)",
+              }}
+            >
+              <h3 style={{ color: "#fff", margin: 0 }}>💬 Comments</h3>
+            </div>
+
+            {/* COMMENT LIST */}
+            <div
+              style={{
+                flex: 1,
+                padding: 20,
+                background: "#0d0d12",
+                overflowY: "auto",
+              }}
+            >
+              {comments.map((c, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    padding: 12,
+                    borderRadius: 8,
+                    marginBottom: 10,
+                  }}
+                >
+                  <b style={{ color: "#667eea" }}>{c.author}</b>
+                  <div style={{ color: "#ddd", marginTop: 5 }}>{c.text}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* COMMENT INPUT */}
+            <div
+              style={{
+                padding: 15,
+                background: "#1f1f2e",
+                borderTop: "1px solid rgba(255,255,255,0.1)",
+              }}
+            >
+              <input
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendComment()}
+                placeholder="Write a comment..."
+                style={{
+                  width: "100%",
+                  padding: 10,
+                  background: "#000",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 8,
+                  color: "#fff",
+                }}
+              />
+              <button
+                onClick={sendComment}
+                style={{
+                  width: "100%",
+                  marginTop: 10,
+                  padding: 10,
+                  background: "linear-gradient(135deg,#667eea,#764ba2)",
+                  border: "none",
+                  borderRadius: 8,
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Send
+              </button>
+            </div>
+          </div>
         </div>
 
-        <input
-          value={commentText}
-          onChange={(e) => setCommentText(e.target.value)}
-          onKeyPress={(e) => e.key === "Enter" && sendComment()}
-          placeholder="Write a comment..."
+        {/* BOTTOM BAR */}
+        <div
           style={{
-            width: "100%",
-            padding: "8px",
-            marginTop: "8px",
-            borderRadius: "6px",
-            border: "1px solid #333",
-            background: "#111",
-            color: "#fff"
-          }}
-        />
-        <button
-          onClick={sendComment}
-          style={{
-            background: "#1976d2",
-            color: "#fff",
-            border: "none",
-            padding: "8px 12px",
-            borderRadius: "6px",
-            cursor: "pointer",
-            marginTop: "8px",
-            width: "100%"
+            background: "rgba(0,0,0,0.3)",
+            padding: "18px 30px",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderTop: "none",
+            borderRadius: "0 0 16px 16px",
+            display: "flex",
+            justifyContent: "space-between",
           }}
         >
-          Send
-        </button>
+          <button
+            onClick={handleExplain}
+            disabled={isLoading}
+            style={{
+              padding: "12px 40px",
+              background: isLoading
+                ? "rgba(255,255,255,0.2)"
+                : "linear-gradient(135deg,#667eea,#764ba2)",
+              color: "#fff",
+              borderRadius: 8,
+              border: "none",
+              cursor: isLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {isLoading ? "Analyzing..." : "✨ Explain Code"}
+          </button>
 
-        <div style={{ marginTop: "12px", color: "#9aa0a6" }}>{status}</div>
+          <div style={{ color: "#ddd" }}>
+            Joined Room: <b style={{ color: "#fff" }}>{room}</b>
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function Section({ title, value }) {
+  if (!value) return null;
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <h4 style={{ color: "#fff" }}>{title}</h4>
+      <pre style={{ whiteSpace: "pre-wrap", color: "#ccc" }}>{value}</pre>
     </div>
   );
 }
