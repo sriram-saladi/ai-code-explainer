@@ -1,4 +1,4 @@
-# 🚀 Code Explainer - AI-Powered Collaborative Code Editor
+# 🚀 CollabCode AI :- Code Explainer with AI-Powered Collaborative Code Editor
 
 > A real-time collaborative code editing platform with AI-powered code explanations using Google Gemini AI, built with FastAPI and Socket.IO.
 
